@@ -14,7 +14,7 @@ import java.util.concurrent.CountDownLatch;
 public class DistributedLock {
 
     private static final String LOCK_ROOT = "/locks";
-    private static final String LOCK_NODE_PREFIX = "lock-";
+    private static final String LOCK_NODE_PREFIX = "order-lock-";
     private static final String LOCK_PATH_PREFIX = LOCK_ROOT + "/" + LOCK_NODE_PREFIX;
 
     private final ZooKeeper zooKeeper;
@@ -53,7 +53,7 @@ public class DistributedLock {
             }
 
             if (currentNodeIndex == 0) {
-                System.out.println(clientName + " da lay duoc khoa.");
+                System.out.println(clientName + " da lay duoc khoa xu ly don hang.");
                 return;
             }
 

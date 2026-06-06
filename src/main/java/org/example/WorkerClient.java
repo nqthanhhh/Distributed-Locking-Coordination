@@ -13,12 +13,25 @@ public class WorkerClient implements Runnable {
     private static final int SESSION_TIMEOUT_MS = 3_000;
     private static final int CONNECTION_TIMEOUT_SECONDS = 10;
 
-    private final String clientName;
-    private final InventoryService inventoryService;
+    private final String customerName;
+    private final String productName;
+    private final String productPath;
+    private final OrderStats orderStats;
+    private final CountDownLatch startSignal;
+    private InventoryService inventoryService;
 
-    public WorkerClient(String clientName, InventoryService inventoryService) {
-        this.clientName = clientName;
-        this.inventoryService = inventoryService;
+    public WorkerClient(
+            String customerName,
+            String productName,
+            String productPath,
+            OrderStats orderStats,
+            CountDownLatch startSignal
+    ) {
+        this.customerName = customerName;
+        this.productName = productName;
+        this.productPath = productPath;
+        this.orderStats = orderStats;
+        this.startSignal = startSignal;
     }
 
     @Override
@@ -27,23 +40,26 @@ public class WorkerClient implements Runnable {
         DistributedLock distributedLock = null;
 
         try {
-            System.out.println(clientName + " dang ket noi ZooKeeper...");
-            zooKeeper = connect();
-            System.out.println(clientName + " ket noi ZooKeeper thanh cong.");
+            startSignal.await();
 
+            System.out.println(customerName + " dang ket noi ZooKeeper...");
+            zooKeeper = connect();
+            System.out.println(customerName + " ket noi ZooKeeper thanh cong.");
+
+            inventoryService = new InventoryService(zooKeeper, orderStats);
             distributedLock = new DistributedLock(zooKeeper);
 
-            System.out.println(clientName + " dang yeu cau mua san pham...");
-            System.out.println(clientName + " dang yeu cau khoa...");
-            distributedLock.acquireLock(clientName);
+            System.out.println(customerName + " gui yeu cau dat mua " + productName + ".");
+            System.out.println(customerName + " dang yeu cau khoa...");
+            distributedLock.acquireLock(customerName);
 
-            // Chỉ client đang giữ khóa mới được kiểm tra và trừ tồn kho.
-            inventoryService.buyProduct(clientName);
+            // Chỉ đọc và cập nhật tồn kho sau khi đã giữ distributed lock.
+            inventoryService.processOrder(customerName, productName, productPath);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            System.err.println(clientName + " bi gian doan.");
+            System.err.println(customerName + " bi gian doan.");
         } catch (Exception e) {
-            System.err.println(clientName + " gap loi: " + e.getMessage());
+            System.err.println(customerName + " gap loi: " + e.getMessage());
         } finally {
             releaseLock(distributedLock);
             closeConnection(zooKeeper);
@@ -76,12 +92,12 @@ public class WorkerClient implements Runnable {
         }
 
         try {
-            distributedLock.releaseLock(clientName);
+            distributedLock.releaseLock(customerName);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            System.err.println(clientName + " bi gian doan khi nha khoa.");
+            System.err.println(customerName + " bi gian doan khi nha khoa.");
         } catch (Exception e) {
-            System.err.println(clientName + " khong the nha khoa: " + e.getMessage());
+            System.err.println(customerName + " khong the nha khoa: " + e.getMessage());
         }
     }
 
@@ -92,10 +108,10 @@ public class WorkerClient implements Runnable {
 
         try {
             zooKeeper.close();
-            System.out.println(clientName + " da dong ket noi ZooKeeper.");
+            System.out.println(customerName + " da dong ket noi ZooKeeper.");
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            System.err.println(clientName + " bi gian doan khi dong ket noi ZooKeeper.");
+            System.err.println(customerName + " bi gian doan khi dong ket noi ZooKeeper.");
         }
     }
 }
