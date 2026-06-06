@@ -2,6 +2,7 @@ package org.example;
 
 import org.apache.zookeeper.CreateMode;
 import org.apache.zookeeper.KeeperException;
+import org.apache.zookeeper.Watcher;
 import org.apache.zookeeper.ZooDefs;
 import org.apache.zookeeper.ZooKeeper;
 
@@ -13,83 +14,82 @@ import java.util.concurrent.CountDownLatch;
 public class DistributedLock {
 
     private static final String LOCK_ROOT = "/locks";
-    private static final String LOCK_PREFIX = "lock-";
-    private static final String LOCK_PATH_PREFIX = LOCK_ROOT + "/" + LOCK_PREFIX;
+    private static final String LOCK_NODE_PREFIX = "lock-";
+    private static final String LOCK_PATH_PREFIX = LOCK_ROOT + "/" + LOCK_NODE_PREFIX;
 
     private final ZooKeeper zooKeeper;
-    private final String clientName;
-    private String currentLockPath;
+    private String currentLockNode;
 
-    public DistributedLock(ZooKeeper zooKeeper, String clientName) {
+    public DistributedLock(ZooKeeper zooKeeper) {
         this.zooKeeper = zooKeeper;
-        this.clientName = clientName;
     }
 
-    public void acquire() throws KeeperException, InterruptedException {
+    public void acquireLock(String clientName) throws KeeperException, InterruptedException {
         createLockRootIfNeeded();
 
-        // EPHEMERAL giúp ZooKeeper tự xóa node nếu client mất kết nối.
-        // SEQUENTIAL tạo số thứ tự để xác định client được giữ khóa trước.
-        currentLockPath = zooKeeper.create(
+        // EPHEMERAL tự xóa khi session đóng; SEQUENTIAL cung cấp thứ tự tranh khóa.
+        currentLockNode = zooKeeper.create(
                 LOCK_PATH_PREFIX,
                 clientName.getBytes(StandardCharsets.UTF_8),
                 ZooDefs.Ids.OPEN_ACL_UNSAFE,
                 CreateMode.EPHEMERAL_SEQUENTIAL
         );
-        System.out.println(clientName + " tao lock node: " + currentLockPath);
+        System.out.println(clientName + " tao lock node: " + currentLockNode);
 
-        String currentNodeName = currentLockPath.substring(LOCK_ROOT.length() + 1);
+        String currentNodeName = currentLockNode.substring(LOCK_ROOT.length() + 1);
 
         while (true) {
             List<String> lockNodes = zooKeeper.getChildren(LOCK_ROOT, false)
                     .stream()
-                    .filter(node -> node.startsWith(LOCK_PREFIX))
+                    .filter(node -> node.startsWith(LOCK_NODE_PREFIX))
                     .sorted(Comparator.naturalOrder())
                     .toList();
 
             int currentNodeIndex = lockNodes.indexOf(currentNodeName);
             if (currentNodeIndex < 0) {
                 throw new KeeperException.NoNodeException(
-                        "Lock node khong con ton tai: " + currentLockPath
+                        "Lock node khong con ton tai: " + currentLockNode
                 );
             }
 
             if (currentNodeIndex == 0) {
+                System.out.println(clientName + " da lay duoc khoa.");
                 return;
             }
 
-            String predecessorPath = LOCK_ROOT + "/" + lockNodes.get(currentNodeIndex - 1);
-            CountDownLatch predecessorDeleted = new CountDownLatch(1);
-            System.out.println(clientName + " dang cho node truoc do: " + predecessorPath);
+            String previousNodePath = LOCK_ROOT + "/" + lockNodes.get(currentNodeIndex - 1);
+            CountDownLatch previousNodeDeleted = new CountDownLatch(1);
 
-            // Chỉ theo dõi node ngay trước để tránh mọi client cùng bị đánh thức.
-            if (zooKeeper.exists(predecessorPath, event -> {
-                if (event.getType() == org.apache.zookeeper.Watcher.Event.EventType.NodeDeleted) {
-                    predecessorDeleted.countDown();
+            System.out.println(clientName + " dang cho node truoc do: " + previousNodePath);
+
+            // Chỉ watch node ngay trước để tránh đánh thức đồng loạt tất cả client.
+            if (zooKeeper.exists(previousNodePath, event -> {
+                if (event.getType() == Watcher.Event.EventType.NodeDeleted) {
+                    previousNodeDeleted.countDown();
                 }
             }) != null) {
-                predecessorDeleted.await();
+                previousNodeDeleted.await();
             }
-            // Nếu node đã biến mất trước khi watcher được đăng ký, kiểm tra lại thứ tự ngay.
+            // Nếu node đã bị xóa trước khi đăng ký watcher, vòng lặp kiểm tra lại ngay.
         }
     }
 
-    public String release() throws KeeperException, InterruptedException {
-        if (currentLockPath == null) {
-            return null;
+    public void releaseLock(String clientName) throws KeeperException, InterruptedException {
+        if (currentLockNode == null) {
+            return;
         }
 
-        String releasedLockPath = currentLockPath;
+        String lockNodeToDelete = currentLockNode;
         try {
-            zooKeeper.delete(currentLockPath, -1);
+            if (zooKeeper.exists(lockNodeToDelete, false) != null) {
+                zooKeeper.delete(lockNodeToDelete, -1);
+                System.out.println(clientName + " da nha khoa: " + lockNodeToDelete);
+            }
         } catch (KeeperException.NoNodeException ignored) {
-            // Node ephemeral có thể đã bị ZooKeeper xóa khi session kết thúc.
-            return null;
+            // Node ephemeral có thể đã được ZooKeeper xóa nếu session kết thúc.
         } finally {
-            currentLockPath = null;
+            currentLockNode = null;
         }
-
-        return releasedLockPath;
     }
 
     private void createLockRootIfNeeded() throws KeeperException, InterruptedException {
@@ -101,7 +101,7 @@ public class DistributedLock {
                     CreateMode.PERSISTENT
             );
         } catch (KeeperException.NodeExistsException ignored) {
-            // Client khác đã tạo /locks trước, có thể tiếp tục sử dụng.
+            // Một client khác đã tạo /locks trước.
         }
     }
 }

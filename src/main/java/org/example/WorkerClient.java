@@ -10,47 +10,42 @@ import java.util.concurrent.TimeUnit;
 public class WorkerClient implements Runnable {
 
     private static final String ZOOKEEPER_ADDRESS = "localhost:2181";
-    private static final int SESSION_TIMEOUT_MS = 5_000;
+    private static final int SESSION_TIMEOUT_MS = 3_000;
     private static final int CONNECTION_TIMEOUT_SECONDS = 10;
-    private static final int WORK_DURATION_MS = 3_000;
 
     private final String clientName;
-    private final CountDownLatch startSignal;
+    private final InventoryService inventoryService;
 
-    public WorkerClient(String clientName, CountDownLatch startSignal) {
+    public WorkerClient(String clientName, InventoryService inventoryService) {
         this.clientName = clientName;
-        this.startSignal = startSignal;
+        this.inventoryService = inventoryService;
     }
 
     @Override
     public void run() {
         ZooKeeper zooKeeper = null;
-        DistributedLock lock = null;
+        DistributedLock distributedLock = null;
 
         try {
-            startSignal.await();
-
             System.out.println(clientName + " dang ket noi ZooKeeper...");
             zooKeeper = connect();
             System.out.println(clientName + " ket noi ZooKeeper thanh cong.");
 
-            lock = new DistributedLock(zooKeeper, clientName);
+            distributedLock = new DistributedLock(zooKeeper);
 
+            System.out.println(clientName + " dang yeu cau mua san pham...");
             System.out.println(clientName + " dang yeu cau khoa...");
-            lock.acquire();
-            System.out.println(clientName + " da lay duoc khoa.");
+            distributedLock.acquireLock(clientName);
 
-            // Mô phỏng vùng xử lý quan trọng chỉ một client được chạy tại một thời điểm.
-            System.out.println(clientName + " dang xu ly tac vu quan trong...");
-            Thread.sleep(WORK_DURATION_MS);
-            System.out.println(clientName + " xu ly xong tac vu.");
+            // Chỉ client đang giữ khóa mới được kiểm tra và trừ tồn kho.
+            inventoryService.buyProduct(clientName);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             System.err.println(clientName + " bi gian doan.");
         } catch (Exception e) {
             System.err.println(clientName + " gap loi: " + e.getMessage());
         } finally {
-            releaseLock(lock);
+            releaseLock(distributedLock);
             closeConnection(zooKeeper);
         }
     }
@@ -75,16 +70,13 @@ public class WorkerClient implements Runnable {
         return zooKeeper;
     }
 
-    private void releaseLock(DistributedLock lock) {
-        if (lock == null) {
+    private void releaseLock(DistributedLock distributedLock) {
+        if (distributedLock == null) {
             return;
         }
 
         try {
-            String releasedLockPath = lock.release();
-            if (releasedLockPath != null) {
-                System.out.println(clientName + " da nha khoa: " + releasedLockPath);
-            }
+            distributedLock.releaseLock(clientName);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             System.err.println(clientName + " bi gian doan khi nha khoa.");
@@ -100,6 +92,7 @@ public class WorkerClient implements Runnable {
 
         try {
             zooKeeper.close();
+            System.out.println(clientName + " da dong ket noi ZooKeeper.");
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             System.err.println(clientName + " bi gian doan khi dong ket noi ZooKeeper.");

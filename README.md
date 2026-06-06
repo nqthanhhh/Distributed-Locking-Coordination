@@ -1,14 +1,16 @@
 # Distributed-Locking-Coordination
 
-Demo Distributed Lock bằng Apache ZooKeeper.
+Demo mô phỏng 5 client cùng đặt mua một sản phẩm có tồn kho giới hạn, sử dụng
+Apache ZooKeeper Distributed Lock để tránh lỗi cập nhật tồn kho đồng thời.
 
 ## Công nghệ sử dụng
 
-- Java 17
+- Java
 - Maven
-- Apache ZooKeeper 3.9.3
+- Apache ZooKeeper
 - Docker
 - IntelliJ IDEA
+- Git/GitHub
 
 ## Chạy ZooKeeper bằng Docker
 
@@ -24,28 +26,37 @@ Nếu container `zookeeper-demo` đã tồn tại:
 docker start zookeeper-demo
 ```
 
+Kiểm tra container đang chạy:
+
+```bash
+docker ps
+```
+
 ZooKeeper sẽ lắng nghe tại `localhost:2181`.
 
-## Chạy demo trong IntelliJ IDEA
+## Chạy demo
 
-1. Mở thư mục dự án bằng IntelliJ IDEA.
+1. Mở project bằng IntelliJ IDEA.
 2. Chờ IntelliJ tải các dependency Maven.
 3. Đảm bảo container ZooKeeper đang chạy.
-4. Mở `src/main/java/org/example/Main.java`.
-5. Nhấn **Run 'Main.main()'**.
+4. Chạy file `src/main/java/org/example/Main.java`.
 
 ## Kết quả mong đợi
 
-Chương trình khởi chạy đồng thời ba client: `Client-1`, `Client-2`, `Client-3`.
-Mỗi client tạo một node `EPHEMERAL_SEQUENTIAL` dưới `/locks` và chờ node
-đứng ngay trước bằng ZooKeeper Watcher. Vì vậy, tại một thời điểm chỉ có một
-client giữ khóa và thực hiện tác vụ quan trọng trong khoảng 3 giây.
+- 5 client cùng yêu cầu mua sản phẩm `Laptop Gaming`.
+- ZooKeeper tạo các node `EPHEMERAL_SEQUENTIAL` trong `/locks`.
+- Client có lock node nhỏ nhất được giữ khóa trước.
+- Client chưa đến lượt watch lock node đứng ngay trước nó.
+- Mỗi thời điểm chỉ một client kiểm tra và trừ tồn kho.
+- Tồn kho ban đầu là 2 nên chỉ 2 client mua thành công.
+- 3 client còn lại thất bại vì hết hàng.
+- Tồn kho cuối cùng là 0 và không bao giờ bị âm.
 
-Thứ tự client lấy khóa có thể thay đổi giữa các lần chạy. Kết quả có dạng:
+Thứ tự các client lấy khóa có thể thay đổi giữa các lần chạy vì chúng hoạt động
+đồng thời.
 
-```text
-Client-2 da lay duoc khoa.
-Client-1 da lay duoc khoa.
-Client-3 da lay duoc khoa.
-KET THUC DEMO
-```
+## Ý nghĩa demo
+
+Demo cho thấy ZooKeeper có thể điều phối các tiến trình trong hệ thống phân tán,
+đảm bảo tính nhất quán dữ liệu và tránh race condition khi nhiều client cùng cập
+nhật một tài nguyên chung.
